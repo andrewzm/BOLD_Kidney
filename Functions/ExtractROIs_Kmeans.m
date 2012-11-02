@@ -1,5 +1,19 @@
 function [zones,cluster_paths] =  ExtractROIs_Kmeans(images_aligned,BW,m,detrend,Full_analysis)
 
+% Core function; extracts the clusters and finds the cluster centres. In a
+% full analysis the cluster number is verified using AIC/BIC etc. A test
+% showing that the clustering is not in any way random is also carried out.
+%
+% Inputs: images_aligned: aligned images in (ratnumber,daynumber,timestep,x,y) format
+%         BW: Quadrant under study
+%         m: Crop mask (all zeros in all cases)
+%         detrend: whether to detrend (negate the mean) the data or not. IN
+%         all tests this was set to 'F'
+%         Full_analysis: 'Y' or 'N': Whether to simple cluster into two or perform
+%         some more tests on the resulting clusters.
+% Outputs: zones: Physical layout of the clusters
+%          cluster_paths: Individaul trajectory of the pixels tagged to the different clusters. 
+
 global scaling
 
 numclusters = 2;
@@ -17,8 +31,7 @@ end
 
 % K-means
 [idx,cluster_paths,Jk] = kmeans(data_vec',numclusters,'Distance','sqEuclidean','replicates',10);
-% [idx,cluster_paths] = GM_EM(data_vec',numclusters,'T',20,100,0.001);
-% Use median for cluster path
+% Use median as a robust mean for cluster path
 cluster_paths(1,:) = median(data_vec(:,idx==1),2);
 cluster_paths(2,:) = median(data_vec(:,idx==2),2);
 
@@ -27,8 +40,6 @@ cluster_paths(2,:) = median(data_vec(:,idx==2),2);
 % idx = cluster(Z,'maxclust',2);
 % cluster_paths(1,:) = mean(data_vec(:,idx == 1)');
 % cluster_paths(2,:) = mean(data_vec(:,idx == 1)');
-
-
 
 zones = repmat(zeros(size(BW)),[1,1,3]);
 for j = 1:numclusters
@@ -51,7 +62,7 @@ end
 
 %Automatic selection
 for i = 1:numclusters
-    zonemean(i) = mean(mean(data_vec(:,idx == i)));
+    zonemean(i) = mean(mean(data_vec(:,idx == i))); %#ok<*AGROW>
 end
 [~,o] = sort(zonemean);
 o = fliplr(o);
@@ -107,7 +118,7 @@ else
 end
 
 hold off
-plot(scaling./data_vec(:,idx == 1),'r'); hold on
+plot(scaling./data_vec(:,idx == 1),'r'); hold on   % scaling converts back to R2*
 plot(scaling./data_vec(:,idx == 2),'g');
 h1=plot(scaling./cluster_paths(1,:),'k--','Linewidth',2);
 h2=plot(scaling./cluster_paths(2,:),'k-','Linewidth',2);
@@ -130,10 +141,9 @@ if Full_analysis == 'Y'
     for i = 1:length(rand_seq(rand_seq == 1))
         random_zones(random_zones_2_pixels(i,2),random_zones_2_pixels(i,1),2) = 255;
     end
-    % imshow(random_zones)
-    
-    % %Compute correlation (ON/OFF) matrix
-    % %Random zones
+   
+    %Compute correlation (ON/OFF) matrix
+    %Random zones
     dist_matrix = squareform(pdist(pixel_coords));
     col = repmat(rand_seq,1,length(rand_seq));
     row = repmat(rand_seq',length(rand_seq),1);
@@ -144,7 +154,7 @@ if Full_analysis == 'Y'
     all_bin_test = sum(sum(corr_pixels))/sum(num_neighbours);
     
     subplot(3,3,3)
-    [i1,~] = find(corr_pixels > 0);
+    %[i1,~] = find(corr_pixels > 0);
     corr_image = zeros(size(BW));
     for i = 1:size(pixel_coords,1)
         corr_image(pixel_coords(i,2),pixel_coords(i,1)) = bin_test(i);
@@ -174,7 +184,6 @@ if Full_analysis == 'Y'
     all_bin_test = sum(sum(corr_pixels))/sum(num_neighbours);
     
     subplot(3,3,4)
-    [i1,~] = find(corr_pixels > 0);
     corr_image = zeros(size(BW));
     for i = 1:size(pixel_coords,1)
         corr_image(pixel_coords(i,2),pixel_coords(i,1)) = bin_test(i);
@@ -197,24 +206,23 @@ if Full_analysis == 'Y'
     pout = myBinomTest(sum(sum(corr_pixels)),sum(num_neighbours),0.5,'Greater');
     text(0.1,0.9*max(n_out),strcat('Sig. greater (P=',num2str(pout) ,')'))
     
-    
+    % Cluster number tests (up to 12 clusters)
+    % Inter-cluster distance
     for i =1:12
-        [~,~,Jk,D] = kmeans(data_vec',i,'Distance','sqEuclidean','replicates',10);
-        D_min = min(D,[],2);
+        [~,~,Jk,~] = kmeans(data_vec',i,'Distance','sqEuclidean','replicates',10);
         sumJk(i) = sum(Jk);
-        %     sumJk(i) = sum(D_min.^2);
     end
-    subplot(3,3,[7])
+    subplot(3,3,7)
     plot(sumJk)
     xlabel('num. of clusters')
     ylabel('total intra-cluster distance')
     axis('tight')
     
-    % Use BIC
+    % BIC
     N = size(data_vec,2);
     dim = size(data_vec,1);
     for i =1:12
-        [idx,~,Jk,D] = kmeans(data_vec',i,'Distance','sqEuclidean','replicates',10);
+        [idx,~,~,D] = kmeans(data_vec',i,'Distance','sqEuclidean','replicates',10);
         D_min = min(D,[],2);       % Find distance to closest cluster
         sigma2 =  1/(N - i)*sum(D_min);
         for j = 1:i
@@ -230,17 +238,15 @@ if Full_analysis == 'Y'
     ylabel('BIC')
     axis('tight')
     
-    % Percentage of variance explained
-    % Use Explained variance
+    % Explained variance
     N = size(data_vec,2);
-    dim = size(data_vec,1);
     % var_tot = sum(sum(data_vec.^2))/(N-1);
     mean_tot = mean(data_vec')';
     var_tot = sum(sum((data_vec - repmat(mean_tot,1,size(data_vec,2))).^2))/(N-1);
     var_tot = sum(var(data_vec'));
     clear sigma2
     for i =1:12
-        [idx,cluster_c,Jk,D] = kmeans(data_vec',i,'Distance','sqEuclidean','replicates',10);
+        [~,~,~,D] = kmeans(data_vec',i,'Distance','sqEuclidean','replicates',10);
         D_min = min(D,[],2);
         var_kmeans = sum(D_min)/(N-1);
         var_expl(i) = (var_tot - var_kmeans)/var_tot;
